@@ -25,10 +25,14 @@
 (defun gh-replacer (gh-token)
     (lambda (line)
       (ppcre:register-groups-bind (orig pr) (image-pred line)
-        (let* ((new-img (merge-hash pr gh-token 8))
-               (new-line (ppcre:regex-replace orig line new-img)))
-          (format t "~areplacing ~a -> ~a~%" #\tab orig new-img)
-          new-line))))
+        (let* ((new-img (handler-case (merge-hash pr gh-token 8)
+                          (error (c)
+                            (format t "Failed to fetch PR merge hash: ~a~%" c)
+                            nil)))
+               (new-line (when new-img (ppcre:regex-replace orig line new-img))))
+          (when new-line
+            (format t "replacing ~a -> ~a~%" orig new-img)
+            new-line)))))
 
 
 (defun help ()
@@ -44,15 +48,13 @@
     (help)
     (uiop:quit))
   (let* ((path (uiop:parse-native-namestring (or (first argv)
-                                                 "./")))
+                                                 (sb-unix:posix-getcwd))))
          (ymls (get-yamls path))
          (token (sb-unix::posix-getenv "GH_TOKEN"))
          (replacer (gh-replacer token)))
     (loop :for file :in ymls
           :do
-             (format t "Processing ~a:~%" file)
-             (replace-lines file replacer)
-             (format t "---~%"))))
+             (replace-lines file replacer))))
 
 (defun main ()
   "Entry point for the executable.

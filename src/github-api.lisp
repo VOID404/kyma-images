@@ -20,8 +20,7 @@
 (defun merge-hash (pr token &optional length)
   "Returns merge hash of PR by number. Can be truncated."
   (let* ((pr (get-pr pr token))
-         (sha (pr->merge-sha pr))
-         (*ellipsis* ""))
+         (sha (pr->merge-sha pr)))
     (if (and sha (numberp length))
-        (str:shorten length sha)
+        (str:shorten length sha :ellipsis "")
         sha)))

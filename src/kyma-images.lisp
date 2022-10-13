@@ -2,13 +2,13 @@
 
 ;; Define your project functionality here...
 
-(defun get-yamls (&optional (path #P"./"))
+(defun get-yamls (&optional (path (sb-posix:getcwd)))
   (let ((*default-pathname-defaults* path))
     (append
      (directory #P"**/values.yaml")
      (directory #P"**/values.yml"))))
 
-(defvar image-pred (ppcre:create-scanner "\\s+version:[\\W]*(PR-(\\w+)).+$"))
+(defvar image-pred (ppcre:create-scanner "^\\s+version:\\s*\"?(PR-(\\w+))\"?\\s*$"))
 
 (defun replace-lines (file replacer &optional (tmp-postfix ".tmp"))
   (let ((renamed-file (rename-file file (format nil "~a~a" file tmp-postfix))))
@@ -47,8 +47,8 @@
     ;; clingon, unix-opts, defmain, adopt… when needed.
     (help)
     (uiop:quit))
-  (let* ((path (uiop:parse-native-namestring (or (first argv)
-                                                 (sb-unix:posix-getcwd))))
+  (let* ((path (merge-pathnames (uiop:parse-native-namestring (or (first argv)
+                                                                 (sb-unix:posix-getcwd)))))
          (ymls (get-yamls path))
          (token (sb-unix::posix-getenv "GH_TOKEN"))
          (replacer (gh-replacer token)))

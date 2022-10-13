@@ -13,7 +13,8 @@
   :depends-on (:dexador
                :jonathan
                :str
-               :cl-ppcre)
+               :cl-ppcre
+               :bt-semaphore)
 
   ;; Project stucture.
   :serial t

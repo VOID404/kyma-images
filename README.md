@@ -17,8 +17,7 @@ or build and run the binary:
 
 ```
 $ make build
-$ ./kyma-images [name]
-Hello [name] from kyma-images
+$ ./kyma-images [path-to-cloned-kyma]
 ```
 
 ## Roswell integration

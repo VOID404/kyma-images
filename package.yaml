@@ -27,6 +27,7 @@ dependencies:
 - regex-tdfa
 - time
 - async
+- bytestring
 
 ghc-options:
 - -Wall

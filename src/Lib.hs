@@ -1,98 +1,93 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedStrings     #-}
-{-# LANGUAGE RecordWildCards       #-}
 module Lib where
 
 import           Control.Concurrent.Async (mapConcurrently_)
-import           Data.Aeson               (FromJSON (..), ToJSON)
+import           Data.ByteString          (ByteString)
 import           Data.Functor
 import           Data.Text                (Text, append, pack, unpack)
 import           Data.Time                (defaultTimeLocale, formatTime)
-import           GitHub.REST              (GHEndpoint (GHEndpoint, endpoint, endpointVals, ghData, method),
-                                           GitHubSettings (GitHubSettings, apiVersion, token, userAgent),
-                                           KeyValue ((:=)),
-                                           MonadGitHubREST (queryGitHub),
-                                           StdMethod (GET), Token, runGitHubT)
+import           Github                   (getMerge, githubAuth)
+import           GitHub.REST              (Token (AccessToken, BearerToken))
 import           Model
 import           Options.Applicative
 import           System.FilePath.Find
 import           Text.Regex.TDFA          ((=~))
 
 
-newtype CmdOpts = CmdOpts
-  { dir     :: FilePath
-  } deriving (Show)
+-- | Docker image tag
+type Tag = Text
 
-run :: CmdOpts -> IO ()
-run CmdOpts{dir = dir} = do
-  files <- findYamls dir
-  mapConcurrently_ processFile files
+data CmdOpts = CmdOpts
+                { dir         :: FilePath
+                , accessToken :: Maybe ByteString
+                , bearerToken :: Maybe ByteString
+                } deriving (Show)
 
-findYamls :: FilePath -> IO [FilePath]
-findYamls = find always (fileName ==? "values.yaml")
-
+-- |Command line arguments parser, used for `run`
 cmdOpts :: Parser CmdOpts
 cmdOpts = CmdOpts
           <$> argument str
               ( metavar "<folder>"
              <> help "Folder containing kyma sources" )
+          <*> option auto
+              ( long "access-token"
+             <> short 'a'
+             <> metavar "<token>"
+             <> value Nothing
+             <> help "GitHub access token. https://developer.github.com/v3/#authentication")
+          <*> option auto
+              ( long "bearer-token"
+             <> short 'b'
+             <> metavar "<token>"
+             <> value Nothing
+             <> help "GitHub bearer token. https://developer.github.com/apps/building-github-apps/authenticating-with-github-apps/#authenticating-as-a-github-app")
 
-processFile :: FilePath -> IO ()
-processFile path = do
-  let auth = ghAuth Nothing
+run :: CmdOpts -> IO ()
+run CmdOpts{ dir = dir
+           , accessToken = accessToken
+           , bearerToken = bearerToken
+           } = do
 
+  files <- findYamls dir
+  let token = AccessToken <$> accessToken
+          <|> BearerToken <$> bearerToken
+
+  mapConcurrently_ (processFile token) files
+
+-- |Finds all @values.yaml@ files in a given path and returns them in a list
+findYamls :: FilePath -> IO [FilePath]
+findYamls = find always (fileName ==? "values.yaml")
+
+
+-- |Replace all PR images in file specified by `FilePath`
+processFile :: Maybe Token -> FilePath -> IO ()
+processFile token path = do
+  let auth = githubAuth token
   content <- readFile path
-
-  newContent <- processContent ((<&> pack . naiveTag) . getMerge auth) $ pack content
+  newContent <- replacePrImages ((<&> naiveTag) . getMerge auth) $ pack content
 
   writeFile path $ unpack newContent
 
--- desired format: v20221227-2dddc00f
-naiveTag :: PrResponse -> String
-naiveTag pr = "v" ++ timeStr ++ "-" ++ take 8 commit
+-- |Generates image tag based on `PrResponse`.
+-- Desired format: @"v" ++ \"YYYYMMDD\" ++ "-" ++ take 8 commitSha@
+naiveTag :: PrResponse -> Tag
+naiveTag pr = pack $ "v" ++ timeStr ++ "-" ++ take 8 commit
   where
     time = mergeDate pr
     timeStr = formatTime defaultTimeLocale "%Y%m%d" time
     commit = unpack $ mergeCommitSha pr
 
-processContent :: (Int -> IO Text) ->  Text -> IO Text
-processContent f file = case (file =~ ("PR-([[:digit:]]+)" :: Text) :: (Text, Text, Text, [Text])) of
+-- |Replaces all PR images in given `Text`
+-- using a function that turns commit # into a `Tag`.
+-- Uses regex, so beware.
+replacePrImages :: (Int -> IO Tag) ->  Text -> IO Text
+replacePrImages f file = case (file =~ ("PR-([[:digit:]]+)" :: Text) :: (Text, Text, Text, [Text])) of
                         (pre, "", "", [])   -> pure pre
                         (pre, _, post, [p]) -> let old = read $ unpack p
                                                    new = f old
                                                 in append
                                                    <$> new
-                                                   <*> processContent f post
+                                                   <*> replacePrImages f post
                                                    <&> append pre
-                        v                   -> error $ "the fuck is this ;_; " ++ show v
-
-kymaOrg :: Text
-kymaOrg = "kyma-project"
-kymaRepo :: Text
-kymaRepo = "kyma"
-
-getMergeGH :: (MonadGitHubREST m, FromJSON a) => Int -> m a
-getMergeGH pr = queryGitHub GHEndpoint
-  { method = GET -- /repos/:owner/:repo/git/refs/:ref
-  , endpoint = "/repos/:owner/:repo/pulls/:pr"
-  , endpointVals =
-    [ "owner" := kymaOrg
-    , "repo" := kymaRepo
-    , "pr" := pr
-    ]
-  , ghData = []
-  }
-
-getMerge :: GitHubSettings -> Int -> IO PrResponse
-getMerge auth pr = runGitHubT auth $ getMergeGH pr
-
-ghAuth :: Maybe Token -> GitHubSettings
-ghAuth tk = GitHubSettings
-             { token = tk
-                -- ^ An authentication token to use, if any.
-              , userAgent = "void/kyma-images"
-                -- ^ GitHub requires this to be set to a User Agent specific to your
-                -- application: https://developer.github.com/v3/#user-agent-required
-              , apiVersion = "v3"
-                -- ^ Specifies the API version to query: https://developer.github.com/v3/media/
-              }
+                        v                   -> error $ "Regex failed me " ++ show v
